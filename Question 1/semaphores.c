@@ -24,7 +24,7 @@ void *producer(void *arg) {
 }
 
 void *copier(void *arg) {
-    sem_wait(&producer_done); // Ensure that producer has added an item
+    sem_wait(&producer_done);
     
     pthread_mutex_lock(&input_mutex);
     int value = input_buffer[copy_index++];
@@ -38,7 +38,7 @@ void *copier(void *arg) {
 }
 
 void *consumer(void *arg) {
-    sem_wait(&copier_done); // Ensure that copier has added an item
+    sem_wait(&copier_done);
     
     pthread_mutex_lock(&output_mutex);
     int value = output_buffer[consume_index++];
@@ -71,22 +71,18 @@ int main(int argc, char *argv[]) {
     pthread_t producers[num_threads], copiers[num_threads], consumers[num_threads];
     printf("The buffer size is %d\n", buffer_size);
 
-    // Start producer threads
     for (int i = 0; i < num_threads; i++) {
         pthread_create(&producers[i], NULL, producer, NULL);
     }
 
-    // Start copier threads after all producers have started
     for (int i = 0; i < num_threads; i++) {
         pthread_create(&copiers[i], NULL, copier, NULL);
     }
 
-    // Start consumer threads after all copiers have started
     for (int i = 0; i < num_threads; i++) {
         pthread_create(&consumers[i], NULL, consumer, NULL);
     }
 
-    // Wait for all threads to complete
     for (int i = 0; i < num_threads; i++) {
         pthread_join(producers[i], NULL);
         pthread_join(copiers[i], NULL);
