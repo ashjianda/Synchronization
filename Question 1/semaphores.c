@@ -17,7 +17,7 @@ void *producer(void *arg) {
     int value = rand() % 100;
     pthread_mutex_lock(&input_mutex);
     input_buffer[input_index++] = value;
-    printf("Inserted %d\n", value);
+    printf("%d inserting\n", value);
     pthread_mutex_unlock(&input_mutex);
     sem_post(&producer_done);
     pthread_exit(0);
@@ -43,7 +43,7 @@ void *consumer(void *arg) {
     pthread_mutex_lock(&output_mutex);
     int value = output_buffer[consume_index++];
     pthread_mutex_unlock(&output_mutex);
-    printf("Consumed %d\n", value);    
+    printf("%d consuming\n", value);    
     pthread_exit(0);
 }
 
@@ -75,6 +75,8 @@ int main(int argc, char *argv[]) {
         pthread_create(&producers[i], NULL, producer, NULL);
     }
 
+    sleep(1);
+    
     for (int i = 0; i < num_threads; i++) {
         pthread_create(&copiers[i], NULL, copier, NULL);
     }
