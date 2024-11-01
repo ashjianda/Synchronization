@@ -7,116 +7,97 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
-sem_t *mutex, *wrt;
-int *read_count;       // To count the number of readers
-int *shared_value;     // Shared integer variable
+#define NUMBER_OF_READERS_AND_WRITERS 3
 
-// Writer function for the parent process
-void writer(int num_writes) {
-    for (int i = 0; i < num_writes; i++) {
-        sem_wait(wrt); // Only one writer can access the shared value at a time
-        
-        *shared_value *= 2;
-        printf("Writer Process Id %d Writing %d\n", getpid(), *shared_value);
-        
-        sem_post(wrt); // Release access to the shared variable for the next writer or reader
-        sleep(1); // Optional: add delay to simulate processing
-    }
-}
+sem_t *sem_reader, *sem_writer;
+int *write_count;
+int *shared_value;
 
-// Reader function for child processes
 void reader() {
-    sem_wait(mutex); // Control access to the read_count variable
+    sem_wait(sem_reader);
     
-    (*read_count)++;
-    if (*read_count == 1) {
-        sem_wait(wrt); // Block writers if this is the first reader
-    }
-    sem_post(mutex);
+    printf("Reader Process Id %d Reading %d\n", getpid(), *shared_value);
     
-    // Reading the shared variable
-    printf("Reader's Process Id %d Reading %d\n", getpid(), *shared_value);
-    
-    sem_wait(mutex);
-    (*read_count)--;
-    if (*read_count == 0) {
-        sem_post(wrt); // Release writer access if this is the last reader
-    }
-    sem_post(mutex);
-    
+    sem_post(sem_reader);
     exit(0);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        printf("Usage: ./priority <number_of_readers> <number_of_writes>\n");
-        exit(1);
+void writer() {
+    (*write_count)++;
+    if (*write_count == 1) {
+        sem_wait(sem_reader);
     }
-    int num_readers = atoi(argv[1]);
-    int num_writes = atoi(argv[2]);
 
-    // Set up shared memory using shm API
-    int read_count_shmid = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
-    int shared_value_shmid = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
-    int mutex_shmid = shmget(IPC_PRIVATE, sizeof(sem_t), IPC_CREAT | 0666);
-    int wrt_shmid = shmget(IPC_PRIVATE, sizeof(sem_t), IPC_CREAT | 0666);
+    if(fork() == 0) {
+        reader();
+    }
+    sem_wait(sem_writer);
     
-    if (read_count_shmid == -1 || shared_value_shmid == -1 || mutex_shmid == -1 || wrt_shmid == -1) {
+    *shared_value *= 2;
+    printf("Writer Process Id %d Writing %d\n", getpid(), *shared_value);
+
+    (*write_count)--;
+    if (*write_count == 0) {
+        sem_post(sem_reader);
+    }
+    
+    sem_post(sem_writer);
+    exit(0);
+}
+
+int main() {
+    int write_count_shmid = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
+    int shared_value_shmid = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
+    int sem_reader_shmid = shmget(IPC_PRIVATE, sizeof(sem_t), IPC_CREAT | 0666);
+    int sem_writer_shmid = shmget(IPC_PRIVATE, sizeof(sem_t), IPC_CREAT | 0666);
+    
+    if (write_count_shmid == -1 || shared_value_shmid == -1 || 
+        sem_reader_shmid == -1 || sem_writer_shmid == -1) {
         perror("shmget failed");
         exit(1);
     }
 
-    // Attach shared memory
-    read_count = (int *)shmat(read_count_shmid, NULL, 0);
+    write_count = (int *)shmat(write_count_shmid, NULL, 0);
     shared_value = (int *)shmat(shared_value_shmid, NULL, 0);
-    mutex = (sem_t *)shmat(mutex_shmid, NULL, 0);
-    wrt = (sem_t *)shmat(wrt_shmid, NULL, 0);
+    sem_reader = (sem_t *)shmat(sem_reader_shmid, NULL, 0);
+    sem_writer = (sem_t *)shmat(sem_writer_shmid, NULL, 0);
 
-    if (read_count == (void *)-1 || shared_value == (void *)-1 || mutex == (void *)-1 || wrt == (void *)-1) {
+    if (write_count == (void *)-1 || shared_value == (void *)-1 || 
+        sem_reader == (void *)-1 || sem_writer == (void *)-1) {
         perror("shmat failed");
         exit(1);
     }
 
-    // Initialize shared variables
-    *read_count = 0;
+    *write_count = 0;
     *shared_value = 1;
+    *writer_waiting = 0;
 
-    // Initialize semaphores
-    sem_init(mutex, 1, 1);
-    sem_init(wrt, 1, 1);
+    sem_init(sem_reader, 1, 1);
+    sem_init(sem_writer, 1, 1);
 
-    printf("Total number of readers and writers: %d\n", num_readers + num_writes);
+    printf("Total number of readers and writers: %d\n", NUMBER_OF_READERS_AND_WRITERS);
 
-    // Create reader processes (children)
-    for (int i = 0; i < num_readers; i++) {
-        pid_t pid = fork();
-        if (pid == 0) {
-            reader();
-        }
+    for (int i = 0; i < NUMBER_OF_READERS_AND_WRITERS; i++) {
+        if (fork() > 0)
+            writer();
     }
 
-    // Parent acts as writer
-    writer(num_writes);
-
-    // Wait for all child (reader) processes to complete
-    for (int i = 0; i < num_readers; i++) {
+    for (int i = 0; i < NUMBER_OF_READERS_AND_WRITERS; i++) {
         wait(NULL);
     }
 
-    // Destroy semaphores
-    sem_destroy(mutex);
-    sem_destroy(wrt);
+    sem_destroy(sem_reader);
+    sem_destroy(sem_writer);
 
-    // Detach and remove shared memory
-    shmdt(read_count);
+    shmdt(write_count);
     shmdt(shared_value);
-    shmdt(mutex);
-    shmdt(wrt);
+    shmdt(sem_reader);
+    shmdt(sem_writer);
 
-    shmctl(read_count_shmid, IPC_RMID, NULL);
+    shmctl(write_count_shmid, IPC_RMID, NULL);
     shmctl(shared_value_shmid, IPC_RMID, NULL);
-    shmctl(mutex_shmid, IPC_RMID, NULL);
-    shmctl(wrt_shmid, IPC_RMID, NULL);
+    shmctl(sem_reader_shmid, IPC_RMID, NULL);
+    shmctl(sem_writer_shmid, IPC_RMID, NULL);
 
     return 0;
 }
